@@ -13,20 +13,48 @@ model_columns = joblib.load('model_columns.pkl')
 @app.route('/predict', methods=['POST'])
 def predict():
     data = request.get_json()
-    input_df = pd.DataFrame([data])
-    input_df = pd.get_dummies(input_df)
-    input_df = input_df.reindex(columns=model_columns, fill_value=0)
-    input_df = input_df.apply(pd.to_numeric, errors='coerce').fillna(0)
+
+    # Build input row with all zeros first
+    input_dict = {col: 0 for col in model_columns}
+
+    # Map fields from frontend to model columns
+    input_dict['stars']                    = float(data.get('stars', 3.0))
+    input_dict['review_count']             = float(data.get('review_count', 0))
+    input_dict['avg_review_stars']         = float(data.get('avg_review_stars', 3.0))
+    input_dict['review_count_total']       = float(data.get('review_count_total', 0))
+    input_dict['days_since_last_review']   = float(data.get('days_since_last_review', 30))
+    input_dict['business_age_days']        = float(data.get('business_age_days', 365))
+    input_dict['rating_trend']             = float(data.get('rating_trend', 0))
+    input_dict['latitude']                 = float(data.get('latitude', 36.17))
+    input_dict['longitude']                = float(data.get('longitude', -115.14))
+    input_dict['RestaurantsPriceRange2']   = float(data.get('RestaurantsPriceRange2', 2))
+
+    # Amenities
+    for field in [
+        'RestaurantsGoodForGroups', 'RestaurantsDelivery', 'RestaurantsTakeOut',
+        'RestaurantsReservations', 'WheelchairAccessible', 'BusinessAcceptsCreditCards',
+        'WiFi', 'BikeParking', 'Caters', 'BusinessParking', 'CoatCheck',
+        'ByAppointmentOnly', 'HasTV', 'OutdoorSeating', 'GoodForKids'
+    ]:
+        if field in input_dict:
+            input_dict[field] = float(data.get(field, 0))
+
+    input_df = pd.DataFrame([input_dict])[model_columns]
+
     prob = model.predict_proba(input_df)[0][1]
-    score = round(prob * 100)
-    if prob >= 0.75:
+    # Model predicts closure risk, so success = 1 - closure_prob
+    success_prob = 1 - prob
+    score = round(success_prob * 100)
+
+    if success_prob >= 0.75:
         decision, risk = "OPEN BUSINESS HERE", "LOW RISK"
-    elif prob >= 0.50:
+    elif success_prob >= 0.50:
         decision, risk = "MODERATE RISK – INVESTIGATE FURTHER", "MEDIUM RISK"
     else:
         decision, risk = "HIGH FAILURE RISK – NOT RECOMMENDED", "HIGH RISK"
+
     return jsonify({
-        "success_probability": round(float(prob), 4),
+        "success_probability": round(float(success_prob), 4),
         "success_score": score,
         "decision": decision,
         "risk_level": risk
